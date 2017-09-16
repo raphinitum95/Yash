@@ -19,165 +19,46 @@ struct process{
     int running;
     bool amp;
 };
-void sig_int(int sig);
-void sig_tstp(int sig);
-void pidwait(int status, pid_t pid, back_p **head);
-void pDone(back_p **head, bool pAll);
-void LList(back_p **head, pid_t pid, char *user_in, bool ampersand);
-int sig_cont(pid_t pid, int *status, bool fg_bg);
-void running(back_p **head, pid_t pid, bool state);
-void removeNode(back_p **head, back_p *temp);
-back_p *findNode(back_p **head, pid_t pid);
-void foreground(pid_t pid, int *p, int *status);
-void execCommand(char *myArgs[2][1000], FILE **file, back_p **head, int *pipefd, bool pipeexist, bool ampersand, char *user_in);
+char *fileRedir[3] = {[0 ... 2]=NULL};
+char *myArgs[2][1000];
+FILE *file[3] = {[0 ... 2] = NULL};
+int pipefd[2];
+bool flags[2];
 
-void sig_int(int sig){}
-void sig_tstp(int sig){}
-
-int main(int argc, char **argv){
-    back_p *head = NULL;
-    char user_in[2000];
-    char cwd[1024];
-    char *fileRedir[3] = {[0 ... 2]=NULL};
-    char *myArgs[2][1000];
-    bool ampersand;
-    FILE *file[3] = {[0 ... 2] = NULL};
-    int pipefd[2];
-    bool pipeexist = false;
-    int status, pid;
-
-    if(signal(SIGINT, sig_int) == SIG_ERR){ //look for the ctrl c signal
-        perror("signal(SIGINT) error");
+back_p *findNode(back_p **head, pid_t pid){
+    back_p *temp = *head;
+    while(temp != NULL){
+        if(pid == temp->lead){
+            return temp;
+        }
+        temp = temp -> next;
     }
-    if(signal(SIGTSTP, sig_tstp) == SIG_ERR){ //look for the ctrl z signal
-        perror("signal stop (SIGTSTP) error");
+    return NULL;
+}
+
+void removeNode(back_p **head, back_p *temp){
+    if(temp == (*head)){
+        (*head) = (*head)->next;
+        if((*head) != NULL) {
+            (*head)->prev = NULL;
+            (*head)->end = temp->end;
+        }
+    } else {
+        if (temp == (*head)->end) {
+            (*head)->end = temp->prev;
+        }
+        if (temp->next != NULL) {
+            temp->next->prev = temp->prev;
+        }
+        temp->prev->next = temp->next;
     }
-    signal(SIGTTOU, SIG_IGN);
+    free(temp);
+}
 
-    while(1){
-        pipeexist = false;
-        ampersand = false;
-        //clearing file redirection arrays
-        if(fileRedir[0] != NULL){
-            fclose(file[0]);
-            free(fileRedir[0]);
-            fileRedir[0] = NULL;
-        }
-        if(fileRedir[1] != NULL){
-            fclose(file[1]);
-            free(fileRedir[1]);
-            fileRedir[1] = NULL;
-        }
-        if(fileRedir[2] != NULL){
-            fclose(file[2]);
-            free(fileRedir[2]);
-            fileRedir[2] = NULL;
-        }
-
-        getcwd(cwd, sizeof(cwd));
-        printf("%s # ", cwd); //printing the prompt message
-
-        int c = scanf("%[^\n]%*c", user_in); //scanning for user input
-        if(c == 0 || c == EOF) {
-            if(c == EOF){
-                while(head != NULL) {
-                    kill(head->lead, SIGKILL);
-                    back_p *temp = head -> next;
-                    free(head);
-                    head = temp;
-                }
-                exit(1);
-            }
-            pDone(&head, false);
-
-            getchar();
-            continue;
-        }
-        fflush(stdout);
-        pDone(&head, false);
-
-        char *token;
-        int cmd = 0, count = 0, count_temp;
-        char imp[2000];
-        strcpy(imp, user_in);
-
-        token = strtok(imp, " \0");
-
-        while(token != NULL){   //parsing the input
-            if(strcmp(token, "fg") == 0){   //if input is fg, turn on the foreground process
-                if(head != NULL) {
-                    foreground(head->end->lead, &pid, &status);
-                    pidwait(status, pid, &head);
-                } else{
-                    perror("fg");
-                }
-                break;
-            } else if(strcmp(token, "bg") == 0){
-                if(head != NULL) {
-                    back_p *temp = head->end;
-                    pid_t t;
-                    while(temp != NULL){
-                        if(temp->running == 0){
-                            t = temp->lead;
-                            break;
-                        }
-                        temp = temp->prev;
-                    }
-                    printf("[%d]%c\t%s\t\t%s\n", temp->job, '+', "Running", temp->user_in);
-                    pid = sig_cont(t, &status, false);
-                    pidwait(status, pid, &head);
-                } else{
-                    perror("bg");
-                }
-                break;
-            } else if(strcmp(token, "jobs") == 0){
-                if(head == NULL){
-                    break;
-                }
-                pDone(&head, true);
-                break;
-            } else if(strcmp(token, "&") == 0){
-                ampersand = true;
-                break;
-            }
-            if(strcmp(token, "|\0") == 0){ //There is a | present and therefore 2 commands
-                pipeexist = true;
-                cmd = 1;
-                count_temp = count;
-                count = 0;
-            } else if(strcmp(token, "<\0") == 0){ //file redirection for stdin
-                token = strtok(NULL, " \0");
-                fileRedir[0] = strdup(token);
-                file[0] = fopen(fileRedir[0], "r");
-            } else if(strcmp(token, ">\0") == 0){ //file redirection for stdout
-                token = strtok(NULL, " \0");
-                fileRedir[1] = strdup(token);
-                file[1] = fopen(fileRedir[1], "w");
-            } else if(strcmp(token, "2>\0") == 0){ //file redirection for stderr
-                token = strtok(NULL, " \0");
-                fileRedir[2] = strdup(token);
-                file[2] = fopen(fileRedir[2], "w");
-            } else {
-                myArgs[cmd][count] = strdup(token); //commands and arguments going into the array
-                count++;
-            }
-            token = strtok(NULL, " \0");
-        }
-        if(pipeexist){
-            if(pipe(pipefd) == -1){
-                perror("pipe");
-                exit(1);
-            }
-            myArgs[0][count_temp] = NULL;
-            myArgs[1][count] = NULL;
-        } else{
-            myArgs[0][count] = NULL;
-            myArgs[1][0] = NULL;
-        }
-
-        if(myArgs[0][0] != NULL) {
-            execCommand(myArgs, file, &head, pipefd, pipeexist, ampersand, user_in);
-        }
+void running(back_p **head, pid_t pid, bool state){
+    back_p *temp = findNode(head, pid);
+    if(temp != NULL) {
+        temp->running = state;
     }
 }
 
@@ -276,50 +157,13 @@ int sig_cont(pid_t pid, int *status, bool fg_bg){
     }
 }
 
-void running(back_p **head, pid_t pid, bool state){
-    back_p *temp = findNode(head, pid);
-    if(temp != NULL) {
-        temp->running = state;
-    }
-}
-
-void removeNode(back_p **head, back_p *temp){
-    if(temp == (*head)){
-        (*head) = (*head)->next;
-        if((*head) != NULL) {
-            (*head)->prev = NULL;
-            (*head)->end = temp->end;
-        }
-    } else {
-        if (temp == (*head)->end) {
-            (*head)->end = temp->prev;
-        }
-        if (temp->next != NULL) {
-            temp->next->prev = temp->prev;
-        }
-        temp->prev->next = temp->next;
-    }
-    free(temp);
-}
-
-back_p *findNode(back_p **head, pid_t pid){
-    back_p *temp = *head;
-    while(temp != NULL){
-        if(pid == temp->lead){
-            return temp;
-        }
-        temp = temp -> next;
-    }
-    return NULL;
-}
-
 void foreground(pid_t pid, int *p, int *status){
     tcsetpgrp(STDIN_FILENO, pid);
     *p = waitpid(pid, status, WUNTRACED | WCONTINUED);
     tcsetpgrp(STDIN_FILENO, getpgid(0));
 }
 
-void execCommand(char *myArgs[2][1000], FILE **file, back_p **head, int *pipefd, bool pipeexist, bool ampersand, char *user_in){
+void execCommand(back_p **head, bool pipeexist, bool ampersand, char *user_in){
     int pid, status;
     pid_t pid_child1, pid_child2;
     pid_child1 = fork();
@@ -401,6 +245,152 @@ void execCommand(char *myArgs[2][1000], FILE **file, back_p **head, int *pipefd,
                 }
             }
 
+        }
+    }
+}
+
+void parse(char *user_in, back_p **head){
+    int status, pid;
+    char *token;
+    int cmd = 0, count = 0, count_temp;
+
+    char imp[2000];
+    strcpy(imp, user_in);
+    token = strtok(imp, " \0");
+
+    while(token != NULL){   //parsing the input
+        if(strcmp(token, "fg") == 0){   //if input is fg, turn on the foreground process
+            if((*head) != NULL) {
+                foreground((*head)->end->lead, &pid, &status);
+                pidwait(status, pid, head);
+            } else{
+                perror("fg");
+            }
+            break;
+        } else if(strcmp(token, "bg") == 0){
+            if((*head) != NULL) {
+                back_p *temp = (*head)->end;
+                pid_t t;
+                while(temp != NULL){
+                    if(temp->running == 0){
+                        t = temp->lead;
+                        break;
+                    }
+                    temp = temp->prev;
+                }
+                printf("[%d]%c\t%s\t\t%s\n", temp->job, '+', "Running", temp->user_in);
+                pid = sig_cont(t, &status, false);
+                pidwait(status, pid, head);
+            } else{
+                perror("bg");
+            }
+            break;
+        } else if(strcmp(token, "jobs") == 0){
+            if((*head) == NULL){
+                break;
+            }
+            pDone(head, true);
+            break;
+        } else if(strcmp(token, "&") == 0){
+            flags[1] = true;
+            break;
+        }
+        if(strcmp(token, "|\0") == 0){ //There is a | present and therefore 2 commands
+            flags[0] = true;
+            cmd = 1;
+            count_temp = count;
+            count = 0;
+        } else if(strcmp(token, "<\0") == 0){ //file redirection for stdin
+            token = strtok(NULL, " \0");
+            fileRedir[0] = strdup(token);
+            file[0] = fopen(fileRedir[0], "r");
+        } else if(strcmp(token, ">\0") == 0){ //file redirection for stdout
+            token = strtok(NULL, " \0");
+            fileRedir[1] = strdup(token);
+            file[1] = fopen(fileRedir[1], "w");
+        } else if(strcmp(token, "2>\0") == 0){ //file redirection for stderr
+            token = strtok(NULL, " \0");
+            fileRedir[2] = strdup(token);
+            file[2] = fopen(fileRedir[2], "w");
+        } else {
+            myArgs[cmd][count] = strdup(token); //commands and arguments going into the array
+            count++;
+        }
+        token = strtok(NULL, " \0");
+    }
+    if(flags[0]){
+        if(pipe(pipefd) == -1){
+            perror("pipe");
+            exit(1);
+        }
+        myArgs[0][count_temp] = NULL;
+        myArgs[1][count] = NULL;
+    } else{
+        myArgs[0][count] = NULL;
+        myArgs[1][0] = NULL;
+    }
+}
+
+void sig_int(int sig){}
+void sig_tstp(int sig){}
+
+int main(int argc, char **argv){
+    back_p *head = NULL;
+    char user_in[2000];
+    char cwd[1024];
+
+    if(signal(SIGINT, sig_int) == SIG_ERR){ //look for the ctrl c signal
+        perror("signal(SIGINT) error");
+    }
+    if(signal(SIGTSTP, sig_tstp) == SIG_ERR){ //look for the ctrl z signal
+        perror("signal stop (SIGTSTP) error");
+    }
+    signal(SIGTTOU, SIG_IGN);
+
+    while(1){
+        //clearing file redirection arrays
+        if(fileRedir[0] != NULL){
+            fclose(file[0]);
+            free(fileRedir[0]);
+            fileRedir[0] = NULL;
+        }
+        if(fileRedir[1] != NULL){
+            fclose(file[1]);
+            free(fileRedir[1]);
+            fileRedir[1] = NULL;
+        }
+        if(fileRedir[2] != NULL){
+            fclose(file[2]);
+            free(fileRedir[2]);
+            fileRedir[2] = NULL;
+        }
+
+        getcwd(cwd, sizeof(cwd));
+        printf("%s # ", cwd); //printing the prompt message
+
+        int c = scanf("%[^\n]%*c", user_in); //scanning for user input
+        if(c == 0 || c == EOF) {
+            if(c == EOF){
+                while(head != NULL) {
+                    kill(head->lead, SIGKILL);
+                    back_p *temp = head -> next;
+                    free(head);
+                    head = temp;
+                }
+                exit(1);
+            }
+            pDone(&head, false);
+
+            getchar();
+            continue;
+        }
+        fflush(stdout);
+        pDone(&head, false);
+
+        parse(user_in, &head);
+
+        if(myArgs[0][0] != NULL) {
+            execCommand(&head, flags[0], flags[1], user_in);
         }
     }
 }
