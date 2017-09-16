@@ -30,6 +30,7 @@ void LList(back_p **head, pid_t pid, char *user_in, bool ampersand);
 int sig_cont(pid_t pid, int *status, bool fg_bg);
 void running(back_p **head, pid_t pid, bool state);
 void removeNode(back_p **head, back_p *temp);
+back_p *findNode(back_p **head, pid_t pid);
 
 void sig_int(int sig){}
 void sig_tstp(int sig){}
@@ -278,7 +279,6 @@ int main(int argc, char **argv){
             }
         }
     }
-    return 0;
 }
 
 void pidwait(int status, pid_t pid, back_p **head){
@@ -287,26 +287,18 @@ void pidwait(int status, pid_t pid, back_p **head){
     } else if(WIFCONTINUED(status)){
         running(head, pid, true);
     }  else if (WIFEXITED(status)) {
-        back_p *temp = *head;
-        while(temp != NULL){
-            if(pid == temp->lead){
-                if(temp->amp){
-                    temp->running = 2;
-                    break;
-                }
+        back_p *temp = findNode(head, pid);
+        if(temp != NULL){
+            if(temp->amp){
+                temp->running = 2;
+            } else {
                 removeNode(head, temp);
-                break;
             }
-            temp = temp -> next;
         }
     } else if(WIFSIGNALED(status)){
-        back_p *temp = *head;
-        while(temp != NULL){
-            if(pid == temp->lead){
-                removeNode(head, temp);
-                break;
-            }
-            temp = temp -> next;
+        back_p *temp = findNode(head, pid);
+        if(temp != NULL){
+            removeNode(head, temp);
         }
     }
 }
@@ -385,13 +377,9 @@ int sig_cont(pid_t pid, int *status, bool fg_bg){
 }
 
 void running(back_p **head, pid_t pid, bool state){
-    back_p *temp = *head;
-    while(temp != NULL) {
-        if (pid == (temp)->lead) {
-            temp->running = state;
-            break;
-        }
-        temp = temp->next;
+    back_p *temp = findNode(head, pid);
+    if(temp != NULL) {
+        temp->running = state;
     }
 }
 
@@ -412,4 +400,15 @@ void removeNode(back_p **head, back_p *temp){
         temp->prev->next = temp->next;
     }
     free(temp);
+}
+
+back_p *findNode(back_p **head, pid_t pid){
+    back_p *temp = *head;
+    while(temp != NULL){
+        if(pid == temp->lead){
+            return temp;
+        }
+        temp = temp -> next;
+    }
+    return NULL;
 }
