@@ -29,6 +29,7 @@ void running(back_p **head, pid_t pid, bool state);
 void removeNode(back_p **head, back_p *temp);
 back_p *findNode(back_p **head, pid_t pid);
 void foreground(pid_t pid, int *p, int *status);
+void execCommand(char *myArgs[2][1000], FILE **file, back_p **head, int *pipefd, bool pipeexist, bool ampersand, char *user_in);
 
 void sig_int(int sig){}
 void sig_tstp(int sig){}
@@ -40,11 +41,10 @@ int main(int argc, char **argv){
     char *fileRedir[3] = {[0 ... 2]=NULL};
     char *myArgs[2][1000];
     bool ampersand;
-    FILE *file[3];
+    FILE *file[3] = {[0 ... 2] = NULL};
     int pipefd[2];
     bool pipeexist = false;
     int status, pid;
-    pid_t pid_child1, pid_child2;
 
     if(signal(SIGINT, sig_int) == SIG_ERR){ //look for the ctrl c signal
         perror("signal(SIGINT) error");
@@ -176,86 +176,7 @@ int main(int argc, char **argv){
         }
 
         if(myArgs[0][0] != NULL) {
-            pid_child1 = fork();
-            if (pid_child1 == 0) {
-                //child 1
-                if (fileRedir[0] != NULL) {
-                    dup2(fileno(file[0]), STDIN_FILENO);
-                }
-                if (fileRedir[2] != NULL) {
-                    dup2(fileno(file[2]), STDERR_FILENO);
-                }
-                if (pipeexist) {
-                    close(pipefd[0]);
-                    dup2(pipefd[1], STDOUT_FILENO);
-                } else if (fileRedir[1] != NULL) {
-                    dup2(fileno(file[1]), STDOUT_FILENO);
-                }
-                execvp(myArgs[0][0], myArgs[0]);
-                perror("exec Child 1");
-                exit(-1);
-
-            } else {
-                //Parent
-                if (strcmp(myArgs[0][0], "cd\0") == 0) {
-                    if (myArgs[0][1] == NULL) {
-                        chdir(getenv("HOME"));
-                    } else {
-                        chdir(myArgs[0][1]);
-                    }
-                }
-
-                if (pipeexist) {
-                    pid_child2 = fork();
-                    if (pid_child2 == 0) {
-                        //Child 2
-                        close(pipefd[1]);
-                        dup2(pipefd[0], STDIN_FILENO);
-                        if (fileRedir[2] != NULL) {
-                            dup2(fileno(file[2]), STDERR_FILENO);
-                        }
-                        if (fileRedir[1] != NULL) {
-                            dup2(fileno(file[1]), STDOUT_FILENO);
-                        }
-                        execvp(myArgs[1][0], myArgs[1]);
-                        perror("exec Child 2");
-                        exit(1);
-                    }
-                    close(pipefd[0]);
-                    close(pipefd[1]);
-                    setpgid(pid_child2, pid_child1);
-                }
-                setpgid(pid_child1, pid_child1);
-                LList(&head, pid_child1, user_in, ampersand);
-
-                pid = 0;
-                if(!ampersand) {
-                    foreground(pid_child1, &pid, &status);
-                    if (pid == -1) {
-                        if (errno != 4) {
-                            perror("waitpid");
-                            exit(EXIT_FAILURE);
-                        } else{
-                            pid = pid_child1;
-                        }
-                    }
-                } else{
-                    pid = waitpid(pid_child1, &status, WNOHANG);
-                }
-
-                pidwait(status, pid, &head);
-
-                for (int i = 0; i < 2; ++i) {
-                    for (int j = 0; j < 1000; ++j) {
-                        if (myArgs[i][j] != NULL) {
-                            free(myArgs[i][j]);
-                        } else {
-                            break;
-                        }
-                    }
-
-                }
-            }
+            execCommand(myArgs, file, &head, pipefd, pipeexist, ampersand, user_in);
         }
     }
 }
@@ -396,4 +317,90 @@ void foreground(pid_t pid, int *p, int *status){
     tcsetpgrp(STDIN_FILENO, pid);
     *p = waitpid(pid, status, WUNTRACED | WCONTINUED);
     tcsetpgrp(STDIN_FILENO, getpgid(0));
+}
+
+void execCommand(char *myArgs[2][1000], FILE **file, back_p **head, int *pipefd, bool pipeexist, bool ampersand, char *user_in){
+    int pid, status;
+    pid_t pid_child1, pid_child2;
+    pid_child1 = fork();
+    if (pid_child1 == 0) {
+        //child 1
+        if (file[0] != NULL) {
+            dup2(fileno(file[0]), STDIN_FILENO);
+        }
+        if (file[2] != NULL) {
+            dup2(fileno(file[2]), STDERR_FILENO);
+        }
+        if (pipeexist) {
+            close(pipefd[0]);
+            dup2(pipefd[1], STDOUT_FILENO);
+        } else if (file[1] != NULL) {
+            dup2(fileno(file[1]), STDOUT_FILENO);
+        }
+        execvp(myArgs[0][0], myArgs[0]);
+        perror("exec Child 1");
+        exit(-1);
+
+    } else {
+        //Parent
+        if (strcmp(myArgs[0][0], "cd\0") == 0) {
+            if (myArgs[0][1] == NULL) {
+                chdir(getenv("HOME"));
+            } else {
+                chdir(myArgs[0][1]);
+            }
+        }
+
+        if (pipeexist) {
+            pid_child2 = fork();
+            if (pid_child2 == 0) {
+                //Child 2
+                close(pipefd[1]);
+                dup2(pipefd[0], STDIN_FILENO);
+                if (file[2] != NULL) {
+                    dup2(fileno(file[2]), STDERR_FILENO);
+                }
+                if (file[1] != NULL) {
+                    dup2(fileno(file[1]), STDOUT_FILENO);
+                }
+                execvp(myArgs[1][0], myArgs[1]);
+                perror("exec Child 2");
+                exit(1);
+            }
+            close(pipefd[0]);
+            close(pipefd[1]);
+            setpgid(pid_child2, pid_child1);
+        }
+
+        setpgid(pid_child1, pid_child1);
+        LList(head, pid_child1, user_in, ampersand);
+        pid = 0;
+
+        if(!ampersand) {
+            foreground(pid_child1, &pid, &status);
+            if (pid == -1) {
+                if (errno != 4) {
+                    perror("waitpid");
+                    exit(EXIT_FAILURE);
+                } else{
+                    pid = pid_child1;
+                }
+            }
+        } else{
+            pid = waitpid(pid_child1, &status, WNOHANG);
+        }
+
+        pidwait(status, pid, head);
+
+        for (int i = 0; i < 2; ++i) {
+            for (int j = 0; j < 1000; ++j) {
+                if (myArgs[i][j] != NULL) {
+                    free(myArgs[i][j]);
+                } else {
+                    break;
+                }
+            }
+
+        }
+    }
 }
