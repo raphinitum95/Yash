@@ -8,6 +8,9 @@
 #include <signal.h>
 #include <errno.h>
 
+#define RED     "\033[31m"
+#define RESET   "\033[0m"
+
 typedef struct process back_p;
 struct process{
     pid_t lead;
@@ -23,7 +26,7 @@ struct process{
 void sig_int(int sig);
 void sig_tstp(int sig);
 void pidwait(int status, pid_t pid, back_p **head);
-void pDone(back_p **head);
+void pDone(back_p **head, bool pAll);
 
 void sig_int(int sig){}
 void sig_tstp(int sig){
@@ -81,11 +84,13 @@ int main(int argc, char **argv){
                 }
                 exit(1);
             }
-            pDone(&head);
+            pDone(&head, false);
 
             getchar();
             continue;
         }
+
+        pDone(&head, false);
 
         char *token;
         int cmd = 0, count, count_temp;
@@ -114,8 +119,17 @@ int main(int argc, char **argv){
                 break;
             } else if(strcmp(token, "bg") == 0){
                 if(head != NULL) {
-                    pid_t t = head->end->lead;
-                    printf("[%d]%c\t%s\t\t%s\n", head->end->job, '+', "Running", head->end->user_in);
+                    back_p *temp = head->end;
+                    pid_t t;
+                    while(temp != NULL){
+                        if(temp->running == 0){
+                            t = temp->lead;
+                            break;
+                        }
+                        temp = temp->prev;
+                    }
+                    printf("[%d]%c\t%s\t\t%s\n", temp->job, '+', "Running", temp->user_in);
+                    temp->amp=true;
                     if(kill(t, SIGCONT)< 0){
                         perror("sigcont");
                     }
@@ -128,29 +142,12 @@ int main(int argc, char **argv){
                 break;
             } else if(strcmp(token, "jobs") == 0){
                 back_p *temp = head;
-                if(temp == NULL){
-                    perror("no Jobs");
+                if(head == NULL){
+                    fprintf(stderr, RED "NO JOBS" RESET "\n");
                     break;
                 }
-                char stat;
-                char *action;
-                while(temp != NULL){
-                    if(temp == head->end){
-                        stat = '+';
-                    } else{
-                        stat = '-';
-                    }
-                    if(temp->running == 1){
-                        action = strdup("Running");
-                    } else if(temp->running == 0){
-                        action = strdup("Stopped");
-                    } else{
-                        action = strdup("Done");
-                    }
-                    printf("[%d]%c\t%s\t\t%s\n", temp->job, stat, action, temp->user_in);
-                    free(action);
-                    temp = temp -> next;
-                }
+                pDone(&head, true);
+                break;
             } else if(strcmp(token, "&") == 0){
                 ampersand = true;
                 break;
@@ -303,40 +300,23 @@ int main(int argc, char **argv){
                 }
 
                 if(fileRedir[0] != NULL){
+                    fclose(file[0]);
                     free(fileRedir[0]);
+                    fileRedir[0] = NULL;
                 }
                 if(fileRedir[1] != NULL){
+                    fclose(file[1]);
                     free(fileRedir[1]);
+                    fileRedir[1] = NULL;
                 }
                 if(fileRedir[2] != NULL){
+                    fclose(file[2]);
                     free(fileRedir[2]);
-                }
-                back_p *temp = head;
-                while(temp != NULL) {
-                    int pid;
-                    int status;
-
-                    pid = waitpid(temp->lead, &status, WNOHANG);
-
-                    pidwait(status, pid, &head);
-
-                    if(temp->running == 2){
-                        char stat;
-                        if(temp == head->end){
-                            stat = '+';
-                        } else{
-                            stat = '-';
-                        }
-                        printf("[%d]%c\t%s\t\t%s\n", temp->job, stat, "Done", temp->user_in);
-                        temp->amp = false;
-                        pidwait(status, pid, &head);
-                    }
-                    temp = temp -> next;
+                    fileRedir[2] = NULL;
                 }
             }
         }
     }
-
     return 0;
 }
 
@@ -350,9 +330,19 @@ void pidwait(int status, pid_t pid, back_p **head){
             }
             temp = &((*temp) -> next);
         }
-    } else if (WIFEXITED(status)) {
+    } else if(WIFCONTINUED(status)){
         back_p *temp = *head;
         while(temp != NULL){
+            if(pid == (temp) -> lead){
+                temp->running = true;
+                break;
+            }
+            temp = temp->next;
+        }
+    } else if (WIFEXITED(status) || WIFSIGNALED(status)) {
+        back_p *temp = *head;
+        while(temp != NULL){
+            //printf("Head is %d and contains %s\n", (int)(*head), (*head)->user_in);
             if(pid == temp->lead){
                 if(temp->amp){
                     temp->running = 2;
@@ -371,48 +361,58 @@ void pidwait(int status, pid_t pid, back_p **head){
                 if(temp == (*head)->end){
                     (*head)->end = temp->prev;
                 }
-                if(temp != NULL && temp->next != NULL) {
+                if(temp->next != NULL) {
                     temp->next->prev = temp->prev;
                 }
                 temp->prev->next = temp->next;
+                //printf("Temp->next is %d\n", (int)(temp->next));
                 free(temp);
                 break;
             }
             temp = temp -> next;
         }
-    } else if(WIFCONTINUED(status)){
-        back_p *temp = *head;
-        while(temp != NULL){
-            if(pid == (temp) -> lead){
-                temp->running = true;
-                break;
-            }
-            temp = temp->next;
-        }
     }
 }
 
-void pDone(back_p **head){
+void pDone(back_p **head, bool pAll){
     back_p *temp = *head;
     while(temp != NULL) {
         int pid;
+        char stat;
         int status;
+        char *action;
+        if(temp->amp) {
+            pid = waitpid(temp->lead, &status, WNOHANG);
+//            printf("Exited %d from %s\n", WIFSIGNALED(status), temp->user_in);
+            fflush(stdout);
 
-        pid = waitpid(temp->lead, &status, WNOHANG);
 
-        pidwait(status, pid, head);
+            pidwait(status, pid, head);
+        }
 
-        if(temp->running == 2){
-            char stat;
-            if(temp == (*head)->end){
-                stat = '+';
-            } else{
-                stat = '-';
-            }
-            printf("[%d]%c\t%s\t\t%s\n", temp->job, stat, "Done", temp->user_in);
+        if(temp == (*head)->end){
+            stat = '+';
+        } else{
+            stat = '-';
+        }
+
+        if(temp->running == 1){
+            action = strdup("Running");
+        } else if(temp->running == 0){
+            action = strdup("Stopped");
+        } else {
+            action = strdup("Done");
+        }
+        if(pAll) {
+            printf("[%d]%c\t%s\t\t%s\n", temp->job, stat, action, temp->user_in);
+        } else if(temp->amp && temp->running == 2){
+            printf("[%d]%c\t%s\t\t%s\n", temp->job, stat, action, temp->user_in);
+        }
+        if(temp->amp && temp->running == 2){
             temp->amp = false;
             pidwait(status, pid, head);
         }
+        free(action);
         temp = temp -> next;
     }
 }
