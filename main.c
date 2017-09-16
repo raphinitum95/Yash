@@ -18,7 +18,6 @@ struct process{
     back_p *next;
     back_p *prev;
     back_p *end;
-    bool head;
     int job;
     int running;
     bool amp;
@@ -28,21 +27,22 @@ void sig_tstp(int sig);
 void pidwait(int status, pid_t pid, back_p **head);
 void pDone(back_p **head, bool pAll);
 void LList(back_p **head, pid_t pid, char *user_in, bool ampersand);
+int sig_cont(pid_t pid, int *status, bool fg_bg);
 
 void sig_int(int sig){}
-void sig_tstp(int sig){
-}
+void sig_tstp(int sig){}
 
 int main(int argc, char **argv){
     back_p *head = NULL;
     char user_in[2000];
     char cwd[1024];
-    char *fileRedir[3];
+    char *fileRedir[3] = {[0 ... 2]=NULL};
     char *myArgs[2][1000];
     bool ampersand;
     FILE *file[3];
     int pipefd[2];
     bool pipeexist = false;
+    int status, pid;
     pid_t pid_child1, pid_child2;
 
     if(signal(SIGINT, sig_int) == SIG_ERR){ //look for the ctrl c signal
@@ -89,28 +89,22 @@ int main(int argc, char **argv){
             getchar();
             continue;
         }
-
+        fflush(stdout);
         pDone(&head, false);
 
         char *token;
-        int cmd = 0, count, count_temp;
+        int cmd = 0, count = 0, count_temp;
         char imp[2000];
         strcpy(imp, user_in);
 
         token = strtok(imp, " \0");
 
-        count = 0;
-        char *q_string;
         while(token != NULL){   //parsing the input
             if(strcmp(token, "fg") == 0){   //if input is fg, turn on the foreground process
                 if(head != NULL) {
                     pid_t t = head->end->lead;
                     tcsetpgrp(STDIN_FILENO, t);
-                    if(kill(t, SIGCONT)< 0){
-                        perror("sigcont");
-                    }
-                    int status;
-                    int pid = waitpid(t, &status, WUNTRACED);
+                    pid = sig_cont(t, &status, true);
                     tcsetpgrp(STDIN_FILENO, getpgid(0));
                     pidwait(status, pid, &head);
                 } else{
@@ -129,20 +123,15 @@ int main(int argc, char **argv){
                         temp = temp->prev;
                     }
                     printf("[%d]%c\t%s\t\t%s\n", temp->job, '+', "Running", temp->user_in);
-                    if(kill(t, SIGCONT)< 0){
-                        perror("sigcont");
-                    }
-                    int status;
-                    int pid = waitpid(t, &status, WCONTINUED);
+                    pid = sig_cont(t, &status, false);
                     pidwait(status, pid, &head);
                 } else{
                     perror("bg");
                 }
                 break;
             } else if(strcmp(token, "jobs") == 0){
-                back_p *temp = head;
                 if(head == NULL){
-                    fprintf(stderr, RED "NO JOBS" RESET "\n");
+                    //fprintf(stderr, RED "NO JOBS" RESET "\n");
                     break;
                 }
                 pDone(&head, true);
@@ -239,8 +228,7 @@ int main(int argc, char **argv){
                 setpgid(pid_child1, pid_child1);
                 LList(&head, pid_child1, user_in, ampersand);
 
-                int status;
-                int pid = 0;
+                pid = 0;
                 if(!ampersand) {
                     tcsetpgrp(STDIN_FILENO, pid_child1);
                     pid = waitpid(pid_child1, &status, WUNTRACED | WCONTINUED);
@@ -269,7 +257,6 @@ int main(int argc, char **argv){
                     }
 
                 }
-
                 if(fileRedir[0] != NULL){
                     fclose(file[0]);
                     free(fileRedir[0]);
@@ -322,7 +309,6 @@ void pidwait(int status, pid_t pid, back_p **head){
                     (*head) = (*head)->next;
                     if((*head) != NULL) {
                         (*head)->prev = NULL;
-                        (*head)->head = true;
                         (*head)->end = temp->end;
                     }
                     free(temp);
@@ -357,13 +343,11 @@ void pDone(back_p **head, bool pAll){
 
             pidwait(status, pid, head);
         }
-
         if(temp == (*head)->end){
             stat = '+';
         } else{
             stat = '-';
         }
-
         if(temp->running == 1){
             action = strdup("Running");
         } else if(temp->running == 0){
@@ -384,6 +368,7 @@ void pDone(back_p **head, bool pAll){
         temp = temp -> next;
     }
 }
+
 void LList(back_p **head, pid_t pid, char *user_in, bool ampersand){
     back_p *temp = (back_p *) malloc(sizeof(back_p));
     strcpy(temp -> user_in, user_in);
@@ -395,15 +380,24 @@ void LList(back_p **head, pid_t pid, char *user_in, bool ampersand){
         temp->amp = true;
     }
     if ((*head) == NULL) {
-        temp->head = true;
         temp->prev = NULL;
         temp->job = 1;
         (*head) = temp;
     } else {
         (*head)->end->next = temp;
         temp->prev = (*head)->end;
-        temp->head = false;
         temp->job = temp->prev->job + 1;
         (*head)->end = temp;
+    }
+}
+
+int sig_cont(pid_t pid, int *status, bool fg_bg){
+    if(kill(pid, SIGCONT)< 0){
+        perror("sigcont");
+    }
+    if(fg_bg) { //if fg called this function
+        return waitpid(pid, status, WUNTRACED);
+    } else{ //if bg called this function
+        return waitpid(pid, status, WCONTINUED);
     }
 }
