@@ -28,6 +28,8 @@ void pidwait(int status, pid_t pid, back_p **head);
 void pDone(back_p **head, bool pAll);
 void LList(back_p **head, pid_t pid, char *user_in, bool ampersand);
 int sig_cont(pid_t pid, int *status, bool fg_bg);
+void running(back_p **head, pid_t pid, bool state);
+void removeNode(back_p **head, back_p *temp);
 
 void sig_int(int sig){}
 void sig_tstp(int sig){}
@@ -105,6 +107,7 @@ int main(int argc, char **argv){
                     pid_t t = head->end->lead;
                     tcsetpgrp(STDIN_FILENO, t);
                     pid = sig_cont(t, &status, true);
+                    //printf("signaled is %d and exited is %d and amp is %d\n", WIFSIGNALED(status), WIFEXITED(status), head->end->amp);
                     tcsetpgrp(STDIN_FILENO, getpgid(0));
                     pidwait(status, pid, &head);
                 } else{
@@ -280,24 +283,10 @@ int main(int argc, char **argv){
 
 void pidwait(int status, pid_t pid, back_p **head){
     if (WIFSTOPPED(status)) {
-        back_p **temp = head;
-        while (*temp != NULL) {
-            if (pid == (*temp)->lead) {
-                (*temp)->running = false;
-                break;
-            }
-            temp = &((*temp) -> next);
-        }
+        running(head, pid, false);
     } else if(WIFCONTINUED(status)){
-        back_p *temp = *head;
-        while(temp != NULL){
-            if(pid == (temp) -> lead){
-                temp->running = true;
-                break;
-            }
-            temp = temp->next;
-        }
-    } else if (WIFEXITED(status) || WIFSIGNALED(status)) {
+        running(head, pid, true);
+    }  else if (WIFEXITED(status)) {
         back_p *temp = *head;
         while(temp != NULL){
             if(pid == temp->lead){
@@ -305,23 +294,16 @@ void pidwait(int status, pid_t pid, back_p **head){
                     temp->running = 2;
                     break;
                 }
-                if(temp == (*head)){
-                    (*head) = (*head)->next;
-                    if((*head) != NULL) {
-                        (*head)->prev = NULL;
-                        (*head)->end = temp->end;
-                    }
-                    free(temp);
-                    break;
-                }
-                if(temp == (*head)->end){
-                    (*head)->end = temp->prev;
-                }
-                if(temp->next != NULL) {
-                    temp->next->prev = temp->prev;
-                }
-                temp->prev->next = temp->next;
-                free(temp);
+                removeNode(head, temp);
+                break;
+            }
+            temp = temp -> next;
+        }
+    } else if(WIFSIGNALED(status)){
+        back_p *temp = *head;
+        while(temp != NULL){
+            if(pid == temp->lead){
+                removeNode(head, temp);
                 break;
             }
             temp = temp -> next;
@@ -400,4 +382,34 @@ int sig_cont(pid_t pid, int *status, bool fg_bg){
     } else{ //if bg called this function
         return waitpid(pid, status, WCONTINUED);
     }
+}
+
+void running(back_p **head, pid_t pid, bool state){
+    back_p *temp = *head;
+    while(temp != NULL) {
+        if (pid == (temp)->lead) {
+            temp->running = state;
+            break;
+        }
+        temp = temp->next;
+    }
+}
+
+void removeNode(back_p **head, back_p *temp){
+    if(temp == (*head)){
+        (*head) = (*head)->next;
+        if((*head) != NULL) {
+            (*head)->prev = NULL;
+            (*head)->end = temp->end;
+        }
+    } else {
+        if (temp == (*head)->end) {
+            (*head)->end = temp->prev;
+        }
+        if (temp->next != NULL) {
+            temp->next->prev = temp->prev;
+        }
+        temp->prev->next = temp->next;
+    }
+    free(temp);
 }
