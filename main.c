@@ -8,9 +8,6 @@
 #include <signal.h>
 #include <errno.h>
 
-#define RED     "\033[31m"
-#define RESET   "\033[0m"
-
 typedef struct process back_p;
 struct process{
     pid_t lead;
@@ -31,6 +28,7 @@ int sig_cont(pid_t pid, int *status, bool fg_bg);
 void running(back_p **head, pid_t pid, bool state);
 void removeNode(back_p **head, back_p *temp);
 back_p *findNode(back_p **head, pid_t pid);
+void foreground(pid_t pid, int *p, int *status);
 
 void sig_int(int sig){}
 void sig_tstp(int sig){}
@@ -62,14 +60,17 @@ int main(int argc, char **argv){
         //clearing file redirection arrays
         if(fileRedir[0] != NULL){
             fclose(file[0]);
+            free(fileRedir[0]);
             fileRedir[0] = NULL;
         }
         if(fileRedir[1] != NULL){
             fclose(file[1]);
+            free(fileRedir[1]);
             fileRedir[1] = NULL;
         }
         if(fileRedir[2] != NULL){
             fclose(file[2]);
+            free(fileRedir[2]);
             fileRedir[2] = NULL;
         }
 
@@ -105,11 +106,7 @@ int main(int argc, char **argv){
         while(token != NULL){   //parsing the input
             if(strcmp(token, "fg") == 0){   //if input is fg, turn on the foreground process
                 if(head != NULL) {
-                    pid_t t = head->end->lead;
-                    tcsetpgrp(STDIN_FILENO, t);
-                    pid = sig_cont(t, &status, true);
-                    //printf("signaled is %d and exited is %d and amp is %d\n", WIFSIGNALED(status), WIFEXITED(status), head->end->amp);
-                    tcsetpgrp(STDIN_FILENO, getpgid(0));
+                    foreground(head->end->lead, &pid, &status);
                     pidwait(status, pid, &head);
                 } else{
                     perror("fg");
@@ -135,7 +132,6 @@ int main(int argc, char **argv){
                 break;
             } else if(strcmp(token, "jobs") == 0){
                 if(head == NULL){
-                    //fprintf(stderr, RED "NO JOBS" RESET "\n");
                     break;
                 }
                 pDone(&head, true);
@@ -234,9 +230,7 @@ int main(int argc, char **argv){
 
                 pid = 0;
                 if(!ampersand) {
-                    tcsetpgrp(STDIN_FILENO, pid_child1);
-                    pid = waitpid(pid_child1, &status, WUNTRACED | WCONTINUED);
-                    tcsetpgrp(STDIN_FILENO, getpgid(0));
+                    foreground(pid_child1, &pid, &status);
                     if (pid == -1) {
                         if (errno != 4) {
                             perror("waitpid");
@@ -260,21 +254,6 @@ int main(int argc, char **argv){
                         }
                     }
 
-                }
-                if(fileRedir[0] != NULL){
-                    fclose(file[0]);
-                    free(fileRedir[0]);
-                    fileRedir[0] = NULL;
-                }
-                if(fileRedir[1] != NULL){
-                    fclose(file[1]);
-                    free(fileRedir[1]);
-                    fileRedir[1] = NULL;
-                }
-                if(fileRedir[2] != NULL){
-                    fclose(file[2]);
-                    free(fileRedir[2]);
-                    fileRedir[2] = NULL;
                 }
             }
         }
@@ -411,4 +390,10 @@ back_p *findNode(back_p **head, pid_t pid){
         temp = temp -> next;
     }
     return NULL;
+}
+
+void foreground(pid_t pid, int *p, int *status){
+    tcsetpgrp(STDIN_FILENO, pid);
+    *p = waitpid(pid, status, WUNTRACED | WCONTINUED);
+    tcsetpgrp(STDIN_FILENO, getpgid(0));
 }
