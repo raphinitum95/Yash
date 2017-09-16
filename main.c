@@ -27,6 +27,7 @@ void sig_int(int sig);
 void sig_tstp(int sig);
 void pidwait(int status, pid_t pid, back_p **head);
 void pDone(back_p **head, bool pAll);
+void LList(back_p **head, pid_t pid, char *user_in, bool ampersand);
 
 void sig_int(int sig){}
 void sig_tstp(int sig){
@@ -75,7 +76,6 @@ int main(int argc, char **argv){
         int c = scanf("%[^\n]%*c", user_in); //scanning for user input
         if(c == 0 || c == EOF) {
             if(c == EOF){
-                perror("shit");
                 while(head != NULL) {
                     kill(head->lead, SIGKILL);
                     back_p *temp = head -> next;
@@ -129,7 +129,6 @@ int main(int argc, char **argv){
                         temp = temp->prev;
                     }
                     printf("[%d]%c\t%s\t\t%s\n", temp->job, '+', "Running", temp->user_in);
-                    temp->amp=true;
                     if(kill(t, SIGCONT)< 0){
                         perror("sigcont");
                     }
@@ -238,36 +237,8 @@ int main(int argc, char **argv){
                     setpgid(pid_child2, pid_child1);
                 }
                 setpgid(pid_child1, pid_child1);
-                if (head == NULL) {
-                    head = (back_p *) malloc(sizeof(back_p));
-                    head->head = true;
-                    head->next = NULL;
-                    head->prev = NULL;
-                    head->end = head;
-                    head->lead = pid_child1;
-                    head->running = true;
-                    head->amp = false;
-                    head->job = 1;
-                    strcpy(head -> user_in, user_in);
-                    if(ampersand){
-                        head->amp = true;
-                    }
-                } else {
-                    back_p *temp = malloc(sizeof(back_p));
-                    head->end->next = temp;
-                    temp->prev = head->end;
-                    head->end = temp;
-                    temp->head = false;
-                    temp->lead = pid_child1;
-                    temp->next = NULL;
-                    temp->running = true;
-                    temp -> amp = false;
-                    temp->job = temp->prev->job + 1;
-                    strcpy(temp -> user_in, user_in);
-                    if(ampersand){
-                        temp->amp = true;
-                    }
-                }
+                LList(&head, pid_child1, user_in, ampersand);
+
                 int status;
                 int pid = 0;
                 if(!ampersand) {
@@ -342,7 +313,6 @@ void pidwait(int status, pid_t pid, back_p **head){
     } else if (WIFEXITED(status) || WIFSIGNALED(status)) {
         back_p *temp = *head;
         while(temp != NULL){
-            //printf("Head is %d and contains %s\n", (int)(*head), (*head)->user_in);
             if(pid == temp->lead){
                 if(temp->amp){
                     temp->running = 2;
@@ -365,7 +335,6 @@ void pidwait(int status, pid_t pid, back_p **head){
                     temp->next->prev = temp->prev;
                 }
                 temp->prev->next = temp->next;
-                //printf("Temp->next is %d\n", (int)(temp->next));
                 free(temp);
                 break;
             }
@@ -383,7 +352,6 @@ void pDone(back_p **head, bool pAll){
         char *action;
         if(temp->amp) {
             pid = waitpid(temp->lead, &status, WNOHANG);
-//            printf("Exited %d from %s\n", WIFSIGNALED(status), temp->user_in);
             fflush(stdout);
 
 
@@ -414,5 +382,28 @@ void pDone(back_p **head, bool pAll){
         }
         free(action);
         temp = temp -> next;
+    }
+}
+void LList(back_p **head, pid_t pid, char *user_in, bool ampersand){
+    back_p *temp = (back_p *) malloc(sizeof(back_p));
+    strcpy(temp -> user_in, user_in);
+    temp->next = NULL;
+    temp->running = true;
+    temp->lead = pid;
+    temp->end = temp;
+    if(ampersand){
+        temp->amp = true;
+    }
+    if ((*head) == NULL) {
+        temp->head = true;
+        temp->prev = NULL;
+        temp->job = 1;
+        (*head) = temp;
+    } else {
+        (*head)->end->next = temp;
+        temp->prev = (*head)->end;
+        temp->head = false;
+        temp->job = temp->prev->job + 1;
+        (*head)->end = temp;
     }
 }
