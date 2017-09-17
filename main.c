@@ -159,7 +159,8 @@ int sig_cont(pid_t pid, int *status, bool fg_bg){
 
 void foreground(pid_t pid, int *p, int *status){
     tcsetpgrp(STDIN_FILENO, pid);
-    *p = waitpid(pid, status, WUNTRACED | WCONTINUED);
+    printf("PID is %d\n", pid);
+    *p = sig_cont(pid, status, true);
     tcsetpgrp(STDIN_FILENO, getpgid(0));
 }
 
