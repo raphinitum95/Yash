@@ -159,7 +159,6 @@ int sig_cont(pid_t pid, int *status, bool fg_bg){
 
 void foreground(pid_t pid, int *p, int *status){
     tcsetpgrp(STDIN_FILENO, pid);
-    printf("PID is %d\n", pid);
     *p = sig_cont(pid, status, true);
     tcsetpgrp(STDIN_FILENO, getpgid(0));
 }
@@ -349,6 +348,8 @@ int main(int argc, char **argv){
     signal(SIGTTOU, SIG_IGN);
 
     while(1){
+        flags[0] = false;
+        flags[1] = false;
         //clearing file redirection arrays
         if(fileRedir[0] != NULL){
             fclose(file[0]);
