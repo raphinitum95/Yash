@@ -147,13 +147,17 @@ void LList(back_p **head, pid_t pid, char *user_in, bool ampersand){
 }
 
 int sig_cont(pid_t pid, int *status, bool fg_bg){
-    if(kill(pid, SIGCONT)< 0){
+    if(kill(-pid, SIGCONT)< 0){
         perror("sigcont");
     }
     if(fg_bg) { //if fg called this function
-        return waitpid(pid, status, WUNTRACED);
+//        if(flags[0]) {
+//            perror("Bitch");
+//            waitpid(-pid, status, WUNTRACED);
+//        }
+        return waitpid(-pid, status, WUNTRACED);
     } else{ //if bg called this function
-        return waitpid(pid, status, WCONTINUED);
+        return waitpid(-pid, status, WCONTINUED);
     }
 }
 
@@ -182,7 +186,7 @@ void execCommand(back_p **head, bool pipeexist, bool ampersand, char *user_in){
             dup2(fileno(file[1]), STDOUT_FILENO);
         }
         execvp(myArgs[0][0], myArgs[0]);
-        perror("exec Child 1");
+        printf("-yash: %s: command not found\n", myArgs[0][0]);
         exit(-1);
 
     } else {
@@ -208,7 +212,7 @@ void execCommand(back_p **head, bool pipeexist, bool ampersand, char *user_in){
                     dup2(fileno(file[1]), STDOUT_FILENO);
                 }
                 execvp(myArgs[1][0], myArgs[1]);
-                perror("exec Child 2");
+                printf("-yash: %s: command not found\n", myArgs[1][0]);
                 exit(1);
             }
             close(pipefd[0]);
@@ -230,11 +234,16 @@ void execCommand(back_p **head, bool pipeexist, bool ampersand, char *user_in){
                     pid = pid_child1;
                 }
             }
+        } else if(strcmp(myArgs[0][0], "ls") == 0){
+            pid = waitpid(pid_child1, &status, WUNTRACED);
+            usleep(1000);
         } else{
-            pid = waitpid(pid_child1, &status, WNOHANG);
+            pid = waitpid(-pid_child1, &status, WNOHANG);
         }
 
         pidwait(status, pid, head);
+
+        pDone(head, false);
 
         for (int i = 0; i < 2; ++i) {
             for (int j = 0; j < 1000; ++j) {
@@ -304,6 +313,11 @@ void parse(char *user_in, back_p **head){
             token = strtok(NULL, " \0");
             fileRedir[0] = strdup(token);
             file[0] = fopen(fileRedir[0], "r");
+            if(!file[0]){
+                printf("File %s does not exist\n", fileRedir[0]);
+                myArgs[0][0] = NULL;
+                break;
+            }
         } else if(strcmp(token, ">\0") == 0){ //file redirection for stdout
             token = strtok(NULL, " \0");
             fileRedir[1] = strdup(token);
@@ -337,7 +351,6 @@ void sig_tstp(int sig){}
 int main(int argc, char **argv){
     back_p *head = NULL;
     char user_in[2000];
-    char cwd[1024];
 
     if(signal(SIGINT, sig_int) == SIG_ERR){ //look for the ctrl c signal
         perror("signal(SIGINT) error");
@@ -366,9 +379,7 @@ int main(int argc, char **argv){
             free(fileRedir[2]);
             fileRedir[2] = NULL;
         }
-
-        getcwd(cwd, sizeof(cwd));
-        printf("%s # ", cwd); //printing the prompt message
+        printf("# "); //printing the prompt message
 
         int c = scanf("%[^\n]%*c", user_in); //scanning for user input
         if(c == 0 || c == EOF) {
@@ -379,7 +390,7 @@ int main(int argc, char **argv){
                     free(head);
                     head = temp;
                 }
-                exit(1);
+                exit(0);
             }
             pDone(&head, false);
 
