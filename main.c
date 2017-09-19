@@ -11,6 +11,7 @@
 typedef struct process back_p;
 struct process{
     pid_t lead;
+    pid_t c2;
     char user_in[2000];
     back_p *next;
     back_p *prev;
@@ -28,7 +29,7 @@ bool flags[2];
 back_p *findNode(back_p **head, pid_t pid){
     back_p *temp = *head;
     while(temp != NULL){
-        if(pid == temp->lead){
+        if(pid == temp->lead || pid == temp->c2){
             return temp;
         }
         temp = temp -> next;
@@ -64,7 +65,14 @@ void running(back_p **head, pid_t pid, bool state){
 
 void pidwait(int status, pid_t pid, back_p **head){
     if (WIFSTOPPED(status)) {
-        running(head, pid, false);
+        back_p *temp = findNode(head, pid);
+        if(temp != NULL){
+            if(temp->running == 2){
+                removeNode(head, temp);
+            } else {
+                running(head, pid, false);
+            }
+        }
     } else if(WIFCONTINUED(status)){
         running(head, pid, true);
     }  else if (WIFEXITED(status)) {
@@ -79,7 +87,11 @@ void pidwait(int status, pid_t pid, back_p **head){
     } else if(WIFSIGNALED(status)){
         back_p *temp = findNode(head, pid);
         if(temp != NULL){
-            removeNode(head, temp);
+            if(temp->amp){
+                temp->running = 2;
+            } else {
+                removeNode(head, temp);
+            }
         }
     }
 }
@@ -117,19 +129,20 @@ void pDone(back_p **head, bool pAll){
         }
         if(temp->amp && temp->running == 2){
             temp->amp = false;
-            pidwait(status, pid, head);
+            pidwait(status, temp->lead, head);
         }
         free(action);
         temp = temp -> next;
     }
 }
 
-void LList(back_p **head, pid_t pid, char *user_in, bool ampersand){
+void LList(back_p **head, pid_t pid, pid_t ch2, char *user_in, bool ampersand){
     back_p *temp = (back_p *) malloc(sizeof(back_p));
     strcpy(temp -> user_in, user_in);
     temp->next = NULL;
     temp->running = true;
     temp->lead = pid;
+    temp->c2 = ch2;
     temp->end = temp;
     if(ampersand){
         temp->amp = true;
@@ -146,24 +159,27 @@ void LList(back_p **head, pid_t pid, char *user_in, bool ampersand){
     }
 }
 
-int sig_cont(pid_t pid, int *status, bool fg_bg){
-    if(kill(-pid, SIGCONT)< 0){
+int sig_cont(pid_t pid, int *status, int fg_bg){
+    pid_t temp;
+    if(kill(-pid, SIGCONT)< 0 && fg_bg != 2){
         perror("sigcont");
     }
     if(fg_bg) { //if fg called this function
-//        if(flags[0]) {
-//            perror("Bitch");
-//            waitpid(-pid, status, WUNTRACED);
-//        }
-        return waitpid(-pid, status, WUNTRACED);
+        if(flags[0]) {
+            waitpid(-pid, status, WUNTRACED);
+            temp = waitpid(-1, status, 0);
+        } else{
+            temp = waitpid(-pid, status, WUNTRACED);
+        }
+        return temp;
     } else{ //if bg called this function
         return waitpid(-pid, status, WCONTINUED);
     }
 }
 
-void foreground(pid_t pid, int *p, int *status){
+void foreground(pid_t pid, int *p, int *status, int a){
     tcsetpgrp(STDIN_FILENO, pid);
-    *p = sig_cont(pid, status, true);
+    *p = sig_cont(pid, status, a);
     tcsetpgrp(STDIN_FILENO, getpgid(0));
 }
 
@@ -198,7 +214,7 @@ void execCommand(back_p **head, bool pipeexist, bool ampersand, char *user_in){
                 chdir(myArgs[0][1]);
             }
         }
-
+        setpgid(pid_child1, pid_child1);
         if (pipeexist) {
             pid_child2 = fork();
             if (pid_child2 == 0) {
@@ -218,14 +234,16 @@ void execCommand(back_p **head, bool pipeexist, bool ampersand, char *user_in){
             close(pipefd[0]);
             close(pipefd[1]);
             setpgid(pid_child2, pid_child1);
+            LList(head, pid_child1, pid_child2, user_in, ampersand);
+        } else{
+            LList(head, pid_child1, -2, user_in, ampersand);
         }
 
-        setpgid(pid_child1, pid_child1);
-        LList(head, pid_child1, user_in, ampersand);
         pid = 0;
+        usleep(10000);
 
         if(!ampersand) {
-            foreground(pid_child1, &pid, &status);
+            foreground(pid_child1, &pid, &status, 2);
             if (pid == -1) {
                 if (errno != 4) {
                     perror("waitpid");
@@ -234,16 +252,11 @@ void execCommand(back_p **head, bool pipeexist, bool ampersand, char *user_in){
                     pid = pid_child1;
                 }
             }
-        } else if(strcmp(myArgs[0][0], "ls") == 0){
-            pid = waitpid(pid_child1, &status, WUNTRACED);
-            usleep(1000);
         } else{
             pid = waitpid(-pid_child1, &status, WNOHANG);
         }
 
         pidwait(status, pid, head);
-
-        pDone(head, false);
 
         for (int i = 0; i < 2; ++i) {
             for (int j = 0; j < 1000; ++j) {
@@ -270,7 +283,7 @@ void parse(char *user_in, back_p **head){
     while(token != NULL){   //parsing the input
         if(strcmp(token, "fg") == 0){   //if input is fg, turn on the foreground process
             if((*head) != NULL) {
-                foreground((*head)->end->lead, &pid, &status);
+                foreground((*head)->end->lead, &pid, &status, true);
                 pidwait(status, pid, head);
             } else{
                 perror("fg");
@@ -379,6 +392,8 @@ int main(int argc, char **argv){
             free(fileRedir[2]);
             fileRedir[2] = NULL;
         }
+
+        //pDone(&head, false);
         printf("# "); //printing the prompt message
 
         int c = scanf("%[^\n]%*c", user_in); //scanning for user input
@@ -398,7 +413,7 @@ int main(int argc, char **argv){
             continue;
         }
         fflush(stdout);
-        pDone(&head, false);
+//        pDone(&head, false);
 
         parse(user_in, &head);
 
