@@ -1,2 +1,2 @@
-# Yash
+# Yash (Yet Another Shell)
 Unix Terminal
